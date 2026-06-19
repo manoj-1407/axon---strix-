@@ -151,23 +151,14 @@ flutter run
 
 ---
 
-## Testing
+## Code Quality
+
+Static analysis is configured to maintain strict styling and architectural guidelines. Run the following command to analyze the codebase:
 
 ```bash
-# Unit tests
-flutter test
-
-# Lint
+# Run dart analysis
 flutter analyze
-
-# With coverage
-flutter test --coverage
 ```
-
-Tests are organized under `test/` mirroring the `lib/` structure:
-- `test/domain/` — entity and repository contract tests
-- `test/data/` — datasource and model tests (with mocktail mocks)
-- `test/presentation/blocs/` — bloc_test driven BLoC tests
 
 ---
 

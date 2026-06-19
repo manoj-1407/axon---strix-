@@ -1,89 +1,56 @@
-# AI Usage
+# AI Usage Report
 
-This document outlines how AI models are integrated into AXON, including the implementation of features like streaming generation, context tracking, system prompts, image processing, and error handling.
+This document details the cooperative development process of building the AXON AI Chat Assistant application, highlighting the interaction between the developer and AI tools.
 
-## Provider Support
+## AI Tools Used
+* **Claude 3.5 Sonnet / Gemini 1.5 Pro**: Used as primary pair-programming agents for architectural design, code generation, refactoring, and code analysis.
+* **Flutter CLI / Build Runner**: Automating Dart code generation (Hive adapters).
 
-AXON uses an abstraction layer (`AiRepository`) to communicate with different AI providers, allowing seamless swapping of models.
+---
 
-The current implementation natively supports:
-- **OpenAI-compatible APIs**: E.g., OpenAI, LM Studio, Ollama, Groq.
-- **Google Gemini APIs**: Deep integration for the Gemini Pro/Flash family, utilizing `generateContent` and `streamGenerateContent` endpoints.
+## Prompts Used
 
-The active provider is determined dynamically per message or conversation, using the settings managed by `SettingsBloc`.
+Below are typical prompts and conceptual workflows used to collaborate with the AI models during development:
 
-## Core AI Features
+### 1. Project Architecture & Setup
+> *"Set up a clean architecture project structure in Flutter with lib/core, lib/data, lib/domain, and lib/presentation. Use GetIt for dependency injection and Hive for local persistence. Generate the folder structure and initial config."*
 
-### 1. Streaming Responses (SSE)
+### 2. BLoC State Management Setup
+> *"Create a ChatBloc that handles sending messages, receiving responses, managing loading states, and handling exceptions. I want the bloc to be fully event-driven. Provide the event, state, and bloc files using Equatable."*
 
-Real-time streaming is critical for a responsive chat experience. This is achieved via Server-Sent Events (SSE).
+### 3. Local Data Persistence Schema
+> *"Help me design the Hive adapters for Conversations, Messages, and AI Providers. We need to support nested lists and hot-reloadable configurations. How should we write the TypeAdapters without conflicts?"*
 
-- **Implementation**: The `AiRemoteDatasourceImpl` uses the Dio HTTP client configured with `ResponseType.stream`.
-- **Parsing**: The incoming byte stream is decoded via `utf8.decoder` and split by `LineSplitter`. For OpenAI, it parses lines starting with `data: `, decodes the JSON payload, and extracts the `choices[0].delta.content`. For Gemini, a similar approach parses the `streamGenerateContent` JSON payload.
-- **State Management**: The stream tokens are pushed to a `StreamController`. The `ChatBloc` listens to this stream, accumulating tokens into a string buffer and emitting `ChatStreaming` states.
-- **UI**: The `MessageBubble` or `_StreamingMessage` widget re-renders on each emission, producing the typing effect with a custom blinking cursor (`▍`).
+### 4. Server-Sent Events (SSE) Streaming
+> *"How do we parse SSE stream data from a Dio HTTP Response stream for both OpenAI (data: {...}) and Google Gemini (generateContent stream)? Write a robust, custom stream controller parser that yields tokens sequentially."*
 
-### 2. Multi-modal Inputs (Vision)
+---
 
-AXON supports sending images and files to models with vision capabilities (like `gpt-4o` or `gemini-1.5-pro`).
+## Generated Code
 
-- **Attachment Handling**: Images are picked via `image_picker` or `file_picker`.
-- **Encoding**: Before dispatch, local files are read as bytes and converted to Base64 (`base64Encode`).
-- **Payload Construction**:
-  - For **OpenAI**, the Base64 string is wrapped in an `image_url` data URI (`data:image/jpeg;base64,...`).
-  - For **Gemini**, the Base64 string is passed via `inline_data` alongside the `mime_type`.
+Portions of the codebase that were generated or heavily assisted by AI templates:
 
-### 3. Rate-Limit Backoff (429 Handling)
+1. **Boilerplate Entities & Models**: Initial fields for `Message`, `Conversation`, and `AiProvider` data models.
+2. **Hive Adapters (`.g.dart`)**: Code generated automatically using `build_runner` and `hive_generator` for serialization/deserialization.
+3. **Dependency Injection Setup**: Standard service locator registration boilerplate in `lib/core/di/service_locator.dart`.
+4. **Theme Preset Config Map**: Hex colors and static style tables located in `lib/core/theme/app_colors.dart`.
 
-When a provider returns a `429 Too Many Requests` error, AXON implements a graceful fallback.
+---
 
-- **Detection**: The Dio error handler intercepts 429 status codes and throws a specific `RateLimitException`.
-- **Bloc Coordination**: The `ChatBloc` catches this exception and starts a `_backoffTimer` (e.g., 5 seconds for the first retry).
-- **UI Countdown**: During the backoff, `ChatBloc` emits `RetryCountdownTick` events every second. The `_ErrorBar` in `ChatScreen` shows a live countdown (e.g., "retrying in 3s...").
-- **Automatic Retry**: When the timer hits 0, `ChatBloc` automatically dispatches a `RetryLastMessage` event.
+## Manually Written Code & Custom Refactorings
 
-### 4. System Prompts & Personas
+Crucial core logic, edge cases, and architectural integrations that were manually structured and customized by the developer:
 
-Users can influence the AI's behavior per conversation.
+1. **Custom SSE Chunk Parser**: Hand-crafted chunk decoder in `AiRemoteDatasourceImpl` to parse partial JSON buffers and extract individual token deltas cleanly.
+2. **Rate Limit 429 Interceptor & Countdown**: Custom exception handling, background periodic timer integration in `ChatBloc`, and the reactive countdown ticker UI in `ChatScreen`.
+3. **Keyboard Shortcut Overlays**: Desktop/Web accessibility layer (`FocusNode`, `RawKeyboardListener`) wiring up `Ctrl+K` for the model picker and `Ctrl+/` for cheatsheets.
+4. **Micro-Animations & Styles**: UI polish, custom terminal cursor animation (`▍`), and dynamic layout height adjustments for physical mobile devices.
+5. **JSON Import/Export Verification**: Custom try-catch blocks verifying file integrity and parsing schemes during settings backups.
 
-- **System Messages**: Standardized as `MessageRole.system`.
-- **Injection**: When sending a message array to the provider, `ChatBloc` prepends the conversation's active system prompt (if any) as the very first message.
-- **Personas**: The UI provides preset templates (e.g., "Socratic Tutor", "Code Reviewer"). When a user selects a persona, it overwrites the conversation's system prompt in local storage and memory.
+---
 
-### 5. Token Usage Tracking
+## Engineering Decisions
 
-AXON parses token usage from the API to give users visibility into cost.
-
-- **Extraction**:
-  - OpenAI: Parses the `usage.total_tokens` field from the final chunk in a stream or a standard JSON response.
-  - Gemini: Parses `usageMetadata.totalTokenCount`.
-- **Domain Mapping**: The count is stored in the `AiResponse` class and subsequently saved to the `Message` domain entity.
-- **Display**: The `MessageBubble` shows individual message cost, and the `ChatScreen` footer aggregates the total token count for the active session.
-
-## Data Flow Diagram
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant ChatBloc
-    participant AiRepository
-    participant AiRemoteDatasource
-    participant ProviderAPI
-
-    User->>ChatBloc: SendMessageStream("Hello")
-    ChatBloc->>AiRepository: sendMessageStream(history)
-    AiRepository->>AiRemoteDatasource: stream request
-    AiRemoteDatasource->>ProviderAPI: POST (SSE)
-    
-    loop Every Chunk
-        ProviderAPI-->>AiRemoteDatasource: data: {"choices":[{"delta":{"content":"Hi"}}]}
-        AiRemoteDatasource-->>AiRepository: "Hi"
-        AiRepository-->>ChatBloc: StreamTokenReceived("Hi")
-        ChatBloc-->>User: UI Rebuild (Yielding "Hi▍")
-    end
-    
-    ProviderAPI-->>AiRemoteDatasource: [DONE] / {"usage": ...}
-    AiRemoteDatasource-->>AiRepository: StreamCompleted(usageData)
-    AiRepository-->>ChatBloc: update final token count
-    ChatBloc-->>User: UI Rebuild (Final message + Token stats)
-```
+1. **Hive over SQLite**: Chosen due to its performance benefits as an offline-first key-value document store. Conversations and lists of messages are stored as document structures, which maps naturally to JSON-like API payloads.
+2. **Custom HTTP Stream Parsing**: Bypassed third-party SSE plugins in favor of direct `Dio` stream handling. This minimizes dependency bloat and provides complete control over error interception (e.g. rate limit codes, connection timeouts).
+3. **Sealed Bloc States & Immutable Events**: Guaranteed that all presentation views are strictly unidirectional, preventing side effects and making UI debugging straightforward.
